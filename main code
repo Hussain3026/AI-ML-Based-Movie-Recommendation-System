@@ -1,0 +1,144 @@
+import streamlit as st
+import pandas as pd
+import requests
+import pickle
+import time
+from fuzzywuzzy import process
+# 🎯 Page Configuration
+st.set_page_config(page_title="🎬 Movie Recommender", page_icon="🎥", layout="wide")
+
+# 🌟 Custom CSS for Styling
+st.markdown("""
+    <style>
+    .main {
+        background-color: black;
+    }
+    .block-container {
+        padding-top: 20px;
+        padding-bottom: 20px;
+    }
+    h1 {
+        color: white;
+    }
+    .stImage > img {
+        border-radius: 10px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+
+# Load Movie Data
+with open('movie_data.pkl', 'rb') as file:
+    movies, cosine_sim = pickle.load(file)
+
+# Ensure 'genres' column exists
+if 'genres' not in movies.columns:
+    movies['genres'] = ""
+
+# Normalize movie titles for better search
+movies['normalized_title'] = movies['title'].str.lower().str.strip()
+
+# Convert genres from lists to strings for filtering
+movies['genres'] = movies['genres'].apply(lambda x: ', '.join(x) if isinstance(x, list) else '')
+
+# TMDb API Key (Replace with your actual API key)
+API_KEY = "46a75c46ed9733d00079ec554d11243f"
+
+# Function to find the closest movie match
+def find_closest_movie(query, movies):
+    result = process.extractOne(query.lower(), movies['normalized_title'].tolist())
+    return (result[0], result[1]) if result else (None, 0)
+
+# Function to get movie recommendations
+def get_movie_recommendations(title):
+    movie_match = movies[movies['normalized_title'] == title]
+    if movie_match.empty:
+        return None
+
+    idx = movie_match.index[0]
+    sim_scores = sorted(enumerate(cosine_sim[idx]), key=lambda x: x[1], reverse=True)[1:11]
+    movie_indices = [i[0] for i in sim_scores]
+    return movies[['title', 'movie_id', 'genres', 'vote_average']].iloc[movie_indices]
+
+# Function to fetch movie poster from TMDb API
+def fetch_poster(movie_id):
+    url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={API_KEY}&language=en-US"
+
+    for _ in range(3):  # Retry up to 3 times
+        try:
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 401:
+                print("❌ Unauthorized: Check your TMDb API key.")
+                return "https://via.placeholder.com/150"
+
+            response.raise_for_status()
+            data = response.json()
+
+            if 'poster_path' in data and data['poster_path']:
+                return f"https://image.tmdb.org/t/p/w500{data['poster_path']}"
+            else:
+                print(f"⚠️ No poster found for movie_id: {movie_id}")
+                return "https://via.placeholder.com/150"
+
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ API request failed for movie_id {movie_id}: {e}")
+            time.sleep(2)  # Wait before retrying
+
+    return "https://via.placeholder.com/150"
+# 🎬 Sidebar Navigation
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg", width=120)
+    st.title("🎥 Movie Finder")
+    st.markdown("Search by movie name, genre, or rating.")
+    st.markdown("---")
+    st.markdown("Built with ❤️ using Streamlit")
+
+
+# Streamlit UI
+st.title("🎬 Movie Recommendation System")
+
+# User input
+user_input = st.text_input("🔍 Enter a movie name, genre, or rating (1-10):").strip()
+
+# Process input
+recommendations = None
+search_type = None
+
+if user_input:
+    if user_input.isdigit():  # If input is a number, treat it as a rating
+        min_rating = int(user_input)
+        recommendations = movies[movies['vote_average'] >= min_rating].sort_values(by='vote_average', ascending=False).head(10)
+        search_type = f"Movies with Rating ≥ {min_rating}"
+    
+    elif any(user_input.lower() in genre.lower() for genre in movies['genres'].unique()):  # If input is a genre
+        recommendations = movies[movies['genres'].str.contains(user_input, case=False, na=False)].sort_values(by='vote_average', ascending=False).head(10)
+        search_type = f"Top Movies in Genre: {user_input.title()}"
+    
+    else:  # Assume it's a movie title
+        matched_movie, score = find_closest_movie(user_input, movies)
+        if matched_movie:
+            recommendations = get_movie_recommendations(matched_movie)
+            search_type = f"Movies similar to {matched_movie.title()}"
+        else:
+            st.error("❌ No matching movie found.")
+
+# Display recommendations
+if recommendations is not None and not recommendations.empty:
+    st.success(f"📌 {search_type}")
+    
+    for i in range(0, len(recommendations), 5):
+        cols = st.columns(5)
+        for col, j in zip(cols, range(i, i + 5)):
+            if j < len(recommendations):
+                movie_title = recommendations.iloc[j]['title']
+                movie_id = recommendations.iloc[j]['movie_id']
+                poster_url = fetch_poster(movie_id)
+
+                with col:
+                    st.image(poster_url, width=130)
+                    st.write(f"**{movie_title}**")
+                    st.write(f"⭐ {recommendations.iloc[j]['vote_average']}")
+                    st.write(f"🎭 {recommendations.iloc[j]['genres']}")  
+else:
+    st.error("❌ No recommendations found.")
