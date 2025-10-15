@@ -26,6 +26,7 @@ TMDb API – Fetches real movie posters dynamically
 Pickle – Stores preprocessed data for fast execution
 
 Methodology
+
 Data Preprocessing: Combine movie features (genre, overview, keywords, cast, director) into a single “tags” field.
 
 Vectorization: Convert text data into numeric form using CountVectorizer.
